@@ -1,16 +1,23 @@
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
-# from langchain.embeddings import HuggingFaceEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
 DB_FAISS_PATH = 'vectorstore/db_faiss'
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+# Page configuration
+st.set_page_config(
+    page_title="MedBot - AI Medical Assistant",
+    page_icon="🏥",
+    layout="wide"
+)
 
 
 @st.cache_resource
@@ -40,63 +47,117 @@ def load_llm(repo_id):
 
 
 def main():
-    st.title("Med Bot")
+    st.title("🏥 MedBot - AI Medical Assistant")
 
+    # Sidebar with three sections
+    with st.sidebar:
+        st.header("📖 How to Use")
+        st.write("**Step 1:** Type your medical question in the chat")
+        st.write("**Step 2:** Click Enter or use the chat input")
+        st.write("**Step 3:** Get AI-powered answers from medical documents")
+        st.write("**Step 4:** View sources to verify information")
+
+        st.divider()
+
+        # st.header("🏗️ How It's Made")
+        st.header("**Architecture Overview:**")
+        st.write("• **PDF Processing:** LangChain document loaders, Trained on The_GALE_ENCYCLOPEDIA_of_MEDICINE_SECOND.pdf")
+        st.write("• **Text Chunking:** Recursive character splitter")
+        st.write("• **Embeddings:** HuggingFace MiniLM-L6-v2")
+        st.write("• **Vector Store:** FAISS for similarity search")
+        st.write("• **LLM:** Groq Llama 3.1 8B Instant")
+        st.write("• **RAG Pipeline:** LangChain RetrievalQA")
+        st.write("• **Frontend:** Streamlit")
+
+        st.divider()
+
+        st.header("🚀 Use Now")
+        st.write("Ready to get medical insights? Start asking questions below!")
+        st.info("💡 **Tip:** Be specific with your medical questions for better results")
+
+        if st.button("🔄 New Conversation", type="primary"):
+            st.session_state.messages = []
+            st.rerun()
+
+    # Initialize session state without persistent history
     if 'messages' not in st.session_state:
         st.session_state.messages = []
 
+    # Display chat messages
     for message in st.session_state.messages:
         st.chat_message(message['role']).markdown(message['content'])
 
-    prompt = st.chat_input("Ask your queries")
+    # Chat input
+    prompt = st.chat_input("Ask your medical questions here...")
 
     if prompt:
+        # Display user message
         st.chat_message('user').markdown(prompt)
         st.session_state.messages.append({'role': 'user', 'content': prompt})
 
+        # Custom prompt template
         custom_prompt_template = """
-        Use the peices of information provided in the context to answer user's question.
-        If you dont know the answer, just say that you dint know, dont try to make up an answer.
+        Use the pieces of information provided in the context to answer user's question.
+        If you don't know the answer, just say that you don't know, don't try to make up an answer.
+        Provide detailed and helpful medical information when available.
 
-        context : {context}
-        Question : {question}
+        context: {context}
+        Question: {question}
 
-        Start the Answer directly no small talks. 
+        Start the answer directly with no small talk.
         """
+
         repo_id = "llama-3.1-8b-instant"
+
         try:
-            vectorstore = get_vectorstore()
-            if vectorstore is None:
-                st.error("Failed to load the vector store")
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=load_llm(repo_id),
-                chain_type="stuff",
-                retriever=vectorstore.as_retriever(search_kwargs={'k': 3}),
-                return_source_documents=True,
-                chain_type_kwargs={
-                    'prompt': set_custom_template(custom_prompt_template)}
-            )
+            with st.spinner("🧠 Analyzing your question..."):
+                vectorstore = get_vectorstore()
+                if vectorstore is None:
+                    st.error("Failed to load the vector store")
+                    return
 
-            response = qa_chain.invoke({'query': prompt})
+                qa_chain = RetrievalQA.from_chain_type(
+                    llm=load_llm(repo_id),
+                    chain_type="stuff",
+                    retriever=vectorstore.as_retriever(search_kwargs={'k': 3}),
+                    return_source_documents=True,
+                    chain_type_kwargs={
+                        'prompt': set_custom_template(custom_prompt_template)}
+                )
 
-            result = response['result']
-            source_docs = response['source_documents']
+                response = qa_chain.invoke({'query': prompt})
+                result = response['result']
+                source_docs = response['source_documents']
 
-            # Format source documents
-            formatted_sources = ""
-            for i, doc in enumerate(source_docs, 1):
-                metadata = doc.metadata
-                page = metadata.get('page_label', metadata.get('page', 'Unknown'))
-                source = metadata.get('source', 'Unknown').split("\\")[-1]
-                formatted_sources += f"**{i}. {source} (Page {page})**\n"
+                # Format source documents
+                formatted_sources = ""
+                if source_docs:
+                    formatted_sources = "\n\n**📚 Sources:**\n"
+                    for i, doc in enumerate(source_docs, 1):
+                        metadata = doc.metadata
+                        page = metadata.get('page_label', metadata.get('page', 'Unknown'))
+                        source = metadata.get('source', 'Unknown').split("\\")[-1].split("/")[-1]
+                        formatted_sources += f"**{i}.** {source} (Page {page})\n"
 
-            result_to_show = result + '\n\n**Sources:**\n' + formatted_sources
-            st.chat_message('assistant').markdown(result_to_show)
-            st.session_state.messages.append(
-                {'role': 'assistant', 'content': result_to_show})
+                result_to_show = result + formatted_sources
+
+                # Display assistant response
+                st.chat_message('assistant').markdown(result_to_show)
+                st.session_state.messages.append(
+                    {'role': 'assistant', 'content': result_to_show})
+
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            error_msg = f"❌ **Error:** {str(e)}\n\nPlease try again or check your setup."
+            st.chat_message('assistant').markdown(error_msg)
+            st.session_state.messages.append(
+                {'role': 'assistant', 'content': error_msg})
 
+    # Footer disclaimer
+    st.divider()
+    st.markdown("""
+    **⚠️ Medical Disclaimer:** This AI assistant provides information for educational purposes only. 
+    Always consult with qualified healthcare professionals for medical advice, diagnosis, or treatment.
+    """)
 
 
 if __name__ == "__main__":
